@@ -137,7 +137,7 @@ async def store_user_message(conn, msg_id, user_id, user_display_name, message, 
         )
         await conn.commit()  # Commit the insertion
 
-        print(f"Stored message ID {msg_id} for user {user_id} ({user_display_name}): '{message}' at {timestamp}")
+        # print(f"Stored message ID {msg_id} for user {user_id} ({user_display_name}): '{message}' at {timestamp}")
 
 # Function to get message by ID
 async def get_message_by_id(conn, msg_id):
@@ -195,13 +195,24 @@ async def get_messages(interaction, user: discord.User):
     async with aiosqlite.connect(db_path) as conn:
         rows = await get_messages_by_user_id(conn, user.id)
 
-        if rows:
-            message_str = ""
-            for row in rows:
-                message_str += f"Message ID {row[0]} at {row[1]}: '{row[4]}'\n"
-            await interaction.response.send_message(message_str)
-        else:
-            await interaction.response.send_message(f"No messages found for user {user.id} ({user.display_name})")
+        # If there are more than 10 messages, only send the last 10
+        truncated = False
+        if len(rows) > 10:
+            rows = rows[-10:]
+            truncated = True
+
+        try:
+            if rows:
+                message_str = ""
+                for row in rows:
+                    message_str += f"Message ID {row[0]} at {row[1]}: '{row[4]}'\n"
+                await interaction.response.send_message(message_str)
+                if truncated:
+                    await interaction.followup.send("Only the last 10 messages were shown. If you need more, please use the get_message command with the message ID")
+            else:
+                await interaction.response.send_message(f"No messages found for user {user.id} ({user.display_name})")
+        except discord.errors.HTTPException as e:
+            await interaction.response.send_message(f"The messages have too many characters to be displayed here. Please use the get_message command with the message ID")
 
 async def load_crew_data():
     # Initialize crew members from file
