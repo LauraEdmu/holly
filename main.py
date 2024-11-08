@@ -40,65 +40,6 @@ logger.addHandler(file_handler)
 # Ranks = Admiral > Commodore > Captain > Lieutenant > Ensign > Crew
 Ranks = ("Admiral", "Commodore", "Captain", "Lieutenant", "Ensign", "Crew") # Ranks in order of highest to lowest stored as a tuple (immutable list)
 
-class CrewMember:
-    def __init__(self, name, rank, player, strikes = 0): # Initialize a CrewMember object
-        self.name = name
-        self.rank = rank
-        self.player = player # discord user id
-        self.strikes = strikes # Strikes for the member
-    
-    def __str__(self): # String representation of a CrewMember object
-        return f"{self.name} - {self.rank} - {self.player}"
-    
-    def __repr__(self): # Representation of a CrewMember object
-        return f"{self.name} - {self.rank} - {self.player}"
-    
-    def __eq__(self, other): # Check if two CrewMember objects are equal
-        return self.name == other.name and self.rank == other.rank and self.player == other.player
-    
-    def __hash__(self): # Hash a CrewMember object
-        return hash((self.name, self.player))
-        
-    def promote(self, member_promoting): 
-        # Check that the rank being promoted to is not higher than the rank of the member promoting
-        if Ranks.index(member_promoting.rank) <= Ranks.index(self.rank):
-            return False
-
-        # If the member is already at the highest rank, they cannot be promoted
-        if self.rank == "Admiral":
-            return False
-
-        # Determine the new rank for promotion
-        newrank = Ranks[Ranks.index(self.rank) - 1]  # Move up one rank in the Ranks tuple
-
-        # Make sure the new rank is not higher than the rank of the member promoting
-        if Ranks.index(member_promoting.rank) <= Ranks.index(newrank):
-            return False
-
-        # Apply the new rank
-        self.rank = newrank
-        return True
-    
-    def demote(self, member_demoting):
-        # Check that the rank of the member demoting is not lower than the rank of the member being demoted
-        if Ranks.index(member_demoting.rank) >= Ranks.index(self.rank):
-            return False
-
-        # If the member is already at the lowest rank, they cannot be demoted
-        if self.rank == "Crew":
-            return False
-
-        # Determine the new rank for demotion
-        newrank = Ranks[Ranks.index(self.rank) + 1]  # Move down one rank in the Ranks tuple
-
-        # Make sure the new rank is not lower than the rank of the member demoting
-        if Ranks.index(member_demoting.rank) >= Ranks.index(newrank):
-            return False
-
-        # Apply the new rank
-        self.rank = newrank
-        return True
-
 
 ### This function is called when the bot is ready to start being used
 @client.event
@@ -110,7 +51,7 @@ async def on_ready():
         activity=discord.Game("Here to Serve!")
     )
     
-    await load_crew_data()
+    await init_cew_db()
     await load_cargo()
     
     logger.info("Bot is ready to use")
@@ -214,78 +155,84 @@ async def get_messages(interaction, user: discord.User):
         except discord.errors.HTTPException as e:
             await interaction.response.send_message(f"The messages have too many characters to be displayed here. Please use the get_message command with the message ID")
 
-async def load_crew_data():
-    # Initialize crew members from file
-    ranks_path = os.path.join("crew_data", "members.json")
-    
-    async with aiofiles.open(ranks_path, "r") as f:
-        crew_data = await f.read()
-    try:
-        crew_data = json.loads(crew_data)
-    except json.JSONDecodeError:
-        # Crew is likely empty
-        logger.warning("Crew members file is empty, if this is not expected, please check the file")
-        crew_data = []
-
-    global crew
-    crew = set()
-
-    for member in crew_data:
-        crew.add(CrewMember(member["name"], member["rank"], member["player"], member["strikes"]))
-        logger.info(f"Loaded crew member {member['name']} with rank {member['rank']} and player {member['player']} (Strikes: {member['strikes']})")
-
-async def save_crew_data():
-    ranks_path = os.path.join("crew_data", "members.json")
-
-    crew_data = []
-
-    for member in crew:
-        crew_data.append({
-            "name": member.name,
-            "rank": member.rank,
-            "player": member.player,
-            "strikes": member.strikes
-        })
-    
-    async with aiofiles.open(ranks_path, "w") as f:
-        await f.write(json.dumps(crew_data, indent=4))
-    
-    logger.info("Crew data saved")
-
-    # Optional backup with dill
-    async with aiofiles.open(os.path.join("crew_data", "members.dill"), "wb") as f:
-        await f.write(dill.dumps(crew))
-    
-    logger.info("Crew data backed up with dill")
+async def init_cew_db():
+    async with aiosqlite.connect("crew_data.db") as db:
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS crew (
+                name TEXT PRIMARY KEY,
+                rank TEXT NOT NULL,
+                player INTEGER NOT NULL,
+                strikes INTEGER NOT NULL
+            )
+        ''')
+        await db.commit()
 
 async def get_member_by_name(name):
-    for member in crew:
-        if member.name == name:
-            return member
-    return None
+    async with aiosqlite.connect("crew_data.db") as db:
+        async with db.execute("SELECT * FROM crew WHERE name = ?", (name,)) as cursor:
+            return await cursor.fetchone()
 
 async def get_member_by_player(player):
-    for member in crew:
-        if member.player == player:
-            return member
-    return None
+    async with aiosqlite.connect("crew_data.db") as db:
+        async with db.execute("SELECT * FROM crew WHERE player = ?", (player,)) as cursor:
+            return await cursor.fetchone()
 
 async def get_members_by_rank(rank):
-    members = set()
-    for member in crew:
-        if member.rank == rank:
-            members.add(member)
-    return members
+    async with aiosqlite.connect("crew_data.db") as db:
+        async with db.execute("SELECT * FROM crew WHERE rank = ?", (rank,)) as cursor:
+            return await cursor.fetchall()
 
 async def new_member(name, rank, player):
-    member = CrewMember(name, rank, player)
-    crew.add(member)
-    await save_crew_data()
-    return member
+    async with aiosqlite.connect("crew_data.db") as db:
+        await db.execute('''
+            INSERT INTO crew (name, rank, player, strikes) VALUES (?, ?, ?, 0)
+        ''', (name, rank, player))
+        await db.commit()
 
-async def remove_member(member):
-    crew.remove(member)
-    await save_crew_data()
+async def remove_member(name):
+    async with aiosqlite.connect("crew_data.db") as db:
+        await db.execute("DELETE FROM crew WHERE name = ?", (name,))
+        await db.commit()
+
+async def promote(member_name, member_promoting):
+    member = await get_member_by_name(member_name)
+    if not member:
+        return False
+
+    if Ranks.index(member_promoting[1]) <= Ranks.index(member[1]):
+        return False
+
+    if member[1] == "Admiral":
+        return False
+
+    newrank = Ranks[Ranks.index(member[1]) - 1]
+    if Ranks.index(member_promoting[1]) <= Ranks.index(newrank):
+        return False
+
+    async with aiosqlite.connect("crew_data.db") as db:
+        await db.execute("UPDATE crew SET rank = ? WHERE name = ?", (newrank, member_name))
+        await db.commit()
+    return True
+
+async def demote(member_name, member_demoting):
+    member = await get_member_by_name(member_name)
+    if not member:
+        return False
+
+    if Ranks.index(member_demoting[1]) >= Ranks.index(member[1]):
+        return False
+
+    if member[1] == "Crew":
+        return False
+
+    newrank = Ranks[Ranks.index(member[1]) + 1]
+    if Ranks.index(member_demoting[1]) >= Ranks.index(newrank):
+        return False
+
+    async with aiosqlite.connect("crew_data.db") as db:
+        await db.execute("UPDATE crew SET rank = ? WHERE name = ?", (newrank, member_name))
+        await db.commit()
+    return True
 
 @tree.command(name="member", description="Get information about a crew member")
 async def member(interaction, name: str = "", id: str = "", user: discord.User = None):
@@ -308,8 +255,9 @@ async def member(interaction, name: str = "", id: str = "", user: discord.User =
 
     if member is None:
         await interaction.response.send_message("Member not found", ephemeral=True)
+        return
     
-    await interaction.response.send_message(f"Name: {member.name}\nRank: {member.rank}\nPlayer: {member.player}\nStrikes: {member.strikes}")
+    await interaction.response.send_message(f"Name: {member[0]}\nRank: {member[1]}\nPlayer: {member[2]}\nStrikes: {member[3]}")
 
 @tree.command(name="newmember", description="Add a new crew member")
 async def newmember(interaction, name: str, rank: str, player: discord.User):
@@ -342,7 +290,7 @@ async def removemember(interaction, name: str):
         await interaction.response.send_message("Member not found", ephemeral=True)
         return
     
-    await remove_member(member)
+    await remove_member(name)
     await interaction.response.send_message(f"Member {name} removed")
 
 @tree.command(name="promote", description="Promote a crew member")
@@ -353,68 +301,56 @@ async def promote(interaction, name: str):
         await interaction.response.send_message("Member not found", ephemeral=True)
         return
     
-    if not member.promote(member_promoting):
+    if not await promote(name, member_promoting):
         await interaction.response.send_message("Member cannot be promoted. You may have not enough permissions or the member is already at the highest rank", ephemeral=True)
         return
     
-    await save_crew_data()
-    await interaction.response.send_message(f"Member {name} promoted to {member.rank}")
+    await interaction.response.send_message(f"Member {name} promoted to {member[1]}")
 
 @tree.command(name="demote", description="Demote a crew member")
 async def demote(interaction, name: str):
     member_demoting = await get_member_by_player(interaction.user.id)
-    if not isinstance(member_demoting, CrewMember):
+    if not member_demoting:
         await interaction.response.send_message("You do not have permission or you are not recognized as a valid member to perform this action", ephemeral=True)
         return
 
     member = await get_member_by_name(name)
-    if not isinstance(member, CrewMember):
+    if not member:
         await interaction.response.send_message("The specified member was not found", ephemeral=True)
         return
 
-    if not member.demote(member_demoting):
+    if not await demote(name, member_demoting):
         await interaction.response.send_message("Member cannot be demoted. You may have not enough permissions or the member is already at the lowest rank", ephemeral=True)
         return
 
-    await save_crew_data()
-    await interaction.response.send_message(f"Member {name} demoted to {member.rank}")
-
-@tree.command(name="reload", description="Reload the crew data")
-async def reload(interaction):
-    if interaction.user.id != 262687596642041856: 
-        await interaction.response.send_message("You do not have permission to reload the crew data", ephemeral=True)
-
-    await load_crew_data()
-    await interaction.response.send_message("Crew data reloaded")
+    await interaction.response.send_message(f"Member {name} demoted to {member[1]}")
 
 @tree.command(name="strike", description="Strike a crew member")
 async def strike(interaction, name: str):
     member_striking = await get_member_by_player(interaction.user.id)
     member = await get_member_by_name(name)
 
-    if not isinstance(member_striking, CrewMember):
+    if not member_striking:
         await interaction.response.send_message("You do not have permission or you are not recognized as a valid member to perform this action", ephemeral=True)
         return
     
-    if not isinstance(member, CrewMember):
+    if not member:
         await interaction.response.send_message("Member not found", ephemeral=True)
         return
 
-    # Check that the member striking is at least a Lieutenant and that the member being struck is lower than them
-    if not member_striking.rank in ("Lieutenant", "Captain", "Commodore", "Admiral"):
+    if not member_striking[1] in ("Lieutenant", "Captain", "Commodore", "Admiral"):
         await interaction.response.send_message("You do not have permission to strike this member", ephemeral=True)
         return
-    elif Ranks.index(member_striking.rank) <= Ranks.index(member.rank):
+    elif Ranks.index(member_striking[1]) <= Ranks.index(member[1]):
         await interaction.response.send_message("You do not have permission to strike this member", ephemeral=True)
         return
 
-    if member is None:
-        await interaction.response.send_message("Member not found", ephemeral=True)
-        return
+    async with aiosqlite.connect("crew_data.db") as db:
+        await db.execute("UPDATE crew SET strikes = strikes + 1 WHERE name = ?", (name,))
+        await db.commit()
     
-    member.strikes += 1
-    await save_crew_data()
-    await interaction.response.send_message(f"Member {name} now has {member.strikes} strikes")
+    await interaction.response.send_message(f"Member {name} now has {member[3] + 1} strikes")
+
 
 # Load cargo
 async def load_cargo():
@@ -503,20 +439,21 @@ async def reloadcargo(interaction):
 @tree.command(name="resign_rank", description="Resign from a rank")
 async def resign_rank(interaction):
     member = await get_member_by_player(interaction.user.id)
-    if not isinstance(member, CrewMember):
-        await interaction.response.send_message("You are not recognized as a valid member to perform this action", ephemeral=True)
+    if not member:
+        await interaction.response.send_message("You are not recognized as a valid member", ephemeral=True)
         return
-
-    if member.rank == "Crew":
+    
+    if member[1] == "Crew":
         await interaction.response.send_message("You are already at the lowest rank", ephemeral=True)
         return
+    
+    newrank = Ranks[Ranks.index(member[1]) + 1]
 
-    # Shift rank down by 1
-    member.rank = Ranks[Ranks.index(member.rank) + 1]
-
-
-    await save_crew_data()
-    await interaction.response.send_message("Resigned from rank")
+    async with aiosqlite.connect("crew_data.db") as db:
+        await db.execute("UPDATE crew SET rank = ? WHERE player = ?", (newrank, interaction.user.id))
+        await db.commit()
+    
+    await interaction.response.send_message(f"You have resigned from {member[1]} to {newrank}")
 
 
 @tree.command(name="is_admin") # Use a lambda function to check if the user is an admin
