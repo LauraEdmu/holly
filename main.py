@@ -536,21 +536,3 @@ if __name__ == "__main__":
         token = f.read().strip()
     
     client.run(token) # Run the bot with the token from the file
-
-# Syntax for a lambda function:
-# lambda arguments: expression
-# Example:
-# x = lambda a, b: a * b
-# print(x(5, 6)) # Output: 30
-# The lambda function above is equivalent to:
-# def x(a, b):
-#     return a * b
-
-# advanced example:
-# x = lambda a, b: a * b if a > 0 and b > 0 else 0
-# print(x(5, 6)) # Output: 30
-
-# The lambda function above is equivalent to:
-# def x(a, b):
-#     if a > 0 and b > 0:
-#         return a * b
